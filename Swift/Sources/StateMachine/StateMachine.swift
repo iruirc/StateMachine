@@ -30,6 +30,7 @@ open class StateMachine<State: StateMachineHashable, Event: StateMachineHashable
     public enum StateMachineError: Error {
 
         case recursionDetected
+        case handleWatingEvents
     }
 
     private struct Observer {
@@ -57,6 +58,8 @@ open class StateMachine<State: StateMachineHashable, Event: StateMachineHashable
     private var observers: [Observer] = []
 
     private var isNotifying: Bool = false
+    private var isHandleWaitingEvents = false
+    private var watingEventsStacks: [Event] = []
 
     public init(@DefinitionBuilder build: () -> Definition) {
         let definition: Definition = build()
@@ -93,10 +96,19 @@ open class StateMachine<State: StateMachineHashable, Event: StateMachineHashable
 
     @discardableResult
     public func transition(_ event: Event) throws -> Transition.Valid {
-        guard !isNotifying
-        else { throw StateMachineError.recursionDetected }
+        
+        guard !isHandleWaitingEvents else {
+            throw StateMachineError.handleWatingEvents
+        }
+        guard !isNotifying else {
+            watingEventsStacks.append(event)
+            throw StateMachineError.recursionDetected
+        }
         let result: Transition.Result
-        defer { notify(result) }
+        defer {
+            notify(result)
+            checkWatingEvents()
+        }
         do {
             let stateIdentifier: State.HashableIdentifier = state.hashableIdentifier
             let eventIdentifier: Event.HashableIdentifier = event.hashableIdentifier
@@ -130,6 +142,19 @@ open class StateMachine<State: StateMachineHashable, Event: StateMachineHashable
             observer.callback(result)
         }
         self.observers = observers
+    }
+    
+    private func checkWatingEvents() {
+        isHandleWaitingEvents = true
+        defer { isHandleWaitingEvents = false }
+        
+        var tempEventStacks = watingEventsStacks
+        watingEventsStacks.removeAll()
+        
+        while let event = tempEventStacks.first {
+            tempEventStacks.removeFirst()
+            _ = try? transition(event)
+        }
     }
 }
 
